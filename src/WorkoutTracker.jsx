@@ -220,7 +220,73 @@ export default function WorkoutTracker() {
     setWorkout(w => ({ ...w, exercises: w.exercises.filter((_, i) => i !== ei) }));
   };
 
-  const allStrengthLogs = history.flatMap(w => w.exercises.filter(e => !isAerobic(e.name)));
+  // History editing
+  const [editingId, setEditingId] = useState(null);
+  const [editShowExLib, setEditShowExLib] = useState(false);
+  const [editLibTab, setEditLibTab] = useState("Upper Body");
+  const [confirmDeleteWorkout, setConfirmDeleteWorkout] = useState(null);
+
+  const startEdit = (w) => {
+    setEditingId(w.id);
+    setEditShowExLib(false);
+  };
+  const cancelEdit = () => { setEditingId(null); setEditShowExLib(false); };
+
+  const updateHistoryWorkout = (id, changes) => {
+    setHistory(h => h.map(w => w.id === id ? { ...w, ...changes } : w));
+  };
+  const updateHistorySet = (id, ei, si, field, val) => {
+    setHistory(h => h.map(w => {
+      if (w.id !== id) return w;
+      const exs = [...w.exercises];
+      exs[ei] = { ...exs[ei], sets: exs[ei].sets.map((s, i) => i === si ? { ...s, [field]: val } : s) };
+      return { ...w, exercises: exs };
+    }));
+  };
+  const addHistorySet = (id, ei) => {
+    setHistory(h => h.map(w => {
+      if (w.id !== id) return w;
+      const exs = [...w.exercises];
+      const last = exs[ei].sets.at(-1);
+      exs[ei] = { ...exs[ei], sets: [...exs[ei].sets, { ...last }] };
+      return { ...w, exercises: exs };
+    }));
+  };
+  const removeHistorySet = (id, ei, si) => {
+    setHistory(h => h.map(w => {
+      if (w.id !== id) return w;
+      const exs = [...w.exercises];
+      exs[ei] = { ...exs[ei], sets: exs[ei].sets.filter((_, i) => i !== si) };
+      return { ...w, exercises: exs };
+    }));
+  };
+  const updateHistoryCardio = (id, ei, field, val) => {
+    setHistory(h => h.map(w => {
+      if (w.id !== id) return w;
+      const exs = [...w.exercises];
+      exs[ei] = { ...exs[ei], [field]: val };
+      return { ...w, exercises: exs };
+    }));
+  };
+  const removeHistoryExercise = (id, ei) => {
+    setHistory(h => h.map(w => w.id === id
+      ? { ...w, exercises: w.exercises.filter((_, i) => i !== ei) }
+      : w));
+  };
+  const addHistoryExercise = (id, name, category) => {
+    const ex = isAerobic(name)
+      ? { name, category, duration: "", distance: "", unit: "mi" }
+      : { name, category, sets: [{ reps: "", weight: "" }] };
+    setHistory(h => h.map(w => w.id === id
+      ? { ...w, exercises: sortExercises([...w.exercises, ex]) }
+      : w));
+    setEditShowExLib(false);
+  };
+  const deleteWorkout = (id) => {
+    setHistory(h => h.filter(w => w.id !== id));
+    setEditingId(null);
+    setConfirmDeleteWorkout(null);
+  };
   const uniqueStrengthExs = [...new Set(allStrengthLogs.map(e => e.name))];
   const thisWeek = history.filter(w => {
     const d = new Date(w.date), now = new Date();
@@ -536,20 +602,21 @@ export default function WorkoutTracker() {
                 <div style={{ fontFamily: "'Bebas Neue'", fontSize: 36, letterSpacing: ".05em" }}>WORKOUT HISTORY</div>
                 <div style={{ color: "#9a8f83", fontSize: 11, letterSpacing: ".15em", textTransform: "uppercase", marginTop: 2 }}>{history.length} sessions logged</div>
               </div>
-              <button className="ghost-btn" onClick={exportToCSV} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                ↓ Export to CSV
-              </button>
+              <button className="ghost-btn" onClick={exportToCSV}>↓ Export to CSV</button>
             </div>
+
             {[...history].sort((a,b) => b.date.localeCompare(a.date)).map(w => {
+              const isEditing = editingId === w.id;
               const groups = groupByCategory(w.exercises);
-              return (
+
+              if (!isEditing) return (
                 <div key={w.id} className="card" style={{ marginBottom: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
                       <div style={{ fontSize: 15, color: "#1a1714", fontWeight: 500, marginBottom: 4 }}>{w.name}</div>
                       <div style={{ color: "#7a6f63", fontSize: 11 }}>{formatDate(w.date)}</div>
                     </div>
-                    <div style={{ color: "#9a8f83", fontSize: 11 }}>{w.exercises.length} exercise{w.exercises.length !== 1 ? "s" : ""}</div>
+                    <button className="ghost-btn" style={{ fontSize: 10, padding: "5px 14px" }} onClick={() => startEdit(w)}>Edit</button>
                   </div>
                   {CATEGORY_ORDER.map(cat => {
                     if (!groups[cat]) return null;
@@ -561,15 +628,138 @@ export default function WorkoutTracker() {
                           <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 12px", background: "#e8e2d8", borderRadius: 2, marginBottom: 4, borderLeft: `2px solid ${col.tagBorder}` }}>
                             <span style={{ fontSize: 12, color: "#2a2420" }}>{ex.name}</span>
                             <span style={{ color: "#7a6f63", fontSize: 11 }}>
-                              {ex.sets
-                                ? `${ex.sets.length} sets · ${Math.max(...ex.sets.map(s=>Number(s.weight)||0))} lbs max`
-                                : `${ex.duration} min · ${ex.distance} ${ex.unit}`}
+                              {ex.sets ? `${ex.sets.length} sets · ${Math.max(...ex.sets.map(s=>Number(s.weight)||0))} lbs max` : `${ex.duration} min · ${ex.distance} ${ex.unit}`}
                             </span>
                           </div>
                         ))}
                       </div>
                     );
                   })}
+                </div>
+              );
+
+              // ---- EDIT MODE ----
+              const editGroups = groupByCategory(w.exercises);
+              return (
+                <div key={w.id} className="card" style={{ marginBottom: 12, borderColor: "#a8d0a8" }}>
+                  {/* Name + date */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, marginBottom: 16 }}>
+                    <input className="input" value={w.name} onChange={e => updateHistoryWorkout(w.id, { name: e.target.value })} placeholder="Workout name" />
+                    <input className="input" type="date" value={w.date} style={{ width: 150 }} onChange={e => updateHistoryWorkout(w.id, { date: e.target.value })} />
+                  </div>
+
+                  {/* Exercises grouped by category */}
+                  {CATEGORY_ORDER.map(cat => {
+                    if (!editGroups[cat]) return null;
+                    const col = CATEGORY_COLORS[cat];
+                    return (
+                      <div key={cat}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 8px" }}>
+                          <span style={{ fontSize: 9, letterSpacing: ".2em", textTransform: "uppercase", color: col.tag }}>{cat}</span>
+                          <div style={{ flex: 1, height: 1, background: col.tagBorder }} />
+                        </div>
+                        {editGroups[cat].map(ex => {
+                          const ei = w.exercises.indexOf(ex);
+                          return (
+                            <div key={ex.name} style={{ background: "#f5f0e8", border: `1px solid ${col.tagBorder}`, borderLeft: `3px solid ${col.tag}`, borderRadius: 2, padding: "12px 14px", marginBottom: 8 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                                <span style={{ fontSize: 13, color: "#1a1714", fontWeight: 500 }}>{ex.name}</span>
+                                <button className="remove-btn" onClick={() => removeHistoryExercise(w.id, ei)}>×</button>
+                              </div>
+                              {ex.sets != null ? (
+                                <div>
+                                  <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr auto", gap: 6, marginBottom: 6, color: "#9a8f83", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase" }}>
+                                    <span>Set</span><span>Reps</span><span>lbs</span><span />
+                                  </div>
+                                  {ex.sets.map((s, si) => (
+                                    <div key={si} style={{ display: "grid", gridTemplateColumns: "32px 1fr 1fr auto", gap: 6, marginBottom: 5, alignItems: "center" }}>
+                                      <span style={{ color: "#9a8f83", fontSize: 11 }}>{si + 1}</span>
+                                      <input className="input" type="number" placeholder="8" value={s.reps} onChange={e => updateHistorySet(w.id, ei, si, "reps", e.target.value)} />
+                                      <input className="input" type="number" placeholder="135" value={s.weight} onChange={e => updateHistorySet(w.id, ei, si, "weight", e.target.value)} />
+                                      <button className="remove-btn" style={{ fontSize: 14 }} onClick={() => removeHistorySet(w.id, ei, si)}>×</button>
+                                    </div>
+                                  ))}
+                                  <button className="ghost-btn" style={{ marginTop: 6, fontSize: 10, padding: "5px 12px" }} onClick={() => addHistorySet(w.id, ei)}>+ Set</button>
+                                </div>
+                              ) : (
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 72px", gap: 8 }}>
+                                  <div>
+                                    <div style={{ color: "#9a8f83", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 4 }}>Duration (min)</div>
+                                    <input className="input" type="number" value={ex.duration} onChange={e => updateHistoryCardio(w.id, ei, "duration", e.target.value)} />
+                                  </div>
+                                  <div>
+                                    <div style={{ color: "#9a8f83", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 4 }}>Distance</div>
+                                    <input className="input" type="number" value={ex.distance} onChange={e => updateHistoryCardio(w.id, ei, "distance", e.target.value)} />
+                                  </div>
+                                  <div>
+                                    <div style={{ color: "#9a8f83", fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 4 }}>Unit</div>
+                                    <select className="input" value={ex.unit} onChange={e => updateHistoryCardio(w.id, ei, "unit", e.target.value)}>
+                                      <option>mi</option><option>km</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add exercise */}
+                  <div style={{ marginTop: 14, marginBottom: 14 }}>
+                    <button className="ghost-btn" style={{ fontSize: 10 }} onClick={() => setEditShowExLib(v => !v)}>+ Add Exercise</button>
+                  </div>
+                  {editShowExLib && (
+                    <div style={{ background: "#f5f0e8", border: "1px solid #d8d0c4", borderRadius: 2, padding: 14, marginBottom: 14 }}>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                        {CATEGORY_ORDER.map(cat => {
+                          const c = CATEGORY_COLORS[cat];
+                          const active = editLibTab === cat;
+                          return (
+                            <button key={cat} onClick={() => setEditLibTab(cat)}
+                              style={{ padding: "5px 12px", borderRadius: 2, border: "1px solid", fontSize: 10, cursor: "pointer", fontFamily: "inherit",
+                                background: active ? c.tag : "transparent", color: active ? "#f5f0e8" : c.tag, borderColor: active ? c.tag : c.tagBorder }}>
+                              {cat}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                        {(categories[editLibTab] || []).map(name => {
+                          const already = w.exercises.some(e => e.name === name);
+                          return (
+                            <div key={name} className="ex-lib-item" onClick={() => !already && addHistoryExercise(w.id, name, editLibTab)}
+                              style={{ opacity: already ? 0.35 : 1, cursor: already ? "default" : "pointer" }}>
+                              {name}{already && <span style={{ fontSize: 10, color: "#9a8f83" }}> · added</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Done / Delete */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, flexWrap: "wrap", gap: 8 }}>
+                    <div>
+                      {confirmDeleteWorkout === w.id ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 11, color: "#cc2222" }}>Delete this workout?</span>
+                          <button onClick={() => deleteWorkout(w.id)}
+                            style={{ background: "#cc2222", color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 10, letterSpacing: ".1em", padding: "6px 12px", borderRadius: 2 }}>Yes, delete</button>
+                          <button className="ghost-btn" style={{ padding: "6px 12px", fontSize: 10 }} onClick={() => setConfirmDeleteWorkout(null)}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button className="ghost-btn" style={{ fontSize: 10, color: "#c05050", borderColor: "#e0c8c8", padding: "6px 14px" }}
+                          onMouseEnter={e => { e.currentTarget.style.color="#cc2222"; e.currentTarget.style.borderColor="#cc2222"; }}
+                          onMouseLeave={e => { e.currentTarget.style.color="#c05050"; e.currentTarget.style.borderColor="#e0c8c8"; }}
+                          onClick={() => setConfirmDeleteWorkout(w.id)}>
+                          Delete Workout
+                        </button>
+                      )}
+                    </div>
+                    <button className="accent-btn" style={{ padding: "8px 24px" }} onClick={cancelEdit}>Done</button>
+                  </div>
                 </div>
               );
             })}
